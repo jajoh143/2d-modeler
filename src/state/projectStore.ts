@@ -1,7 +1,8 @@
 import { create } from "zustand";
 import { produce, enablePatches, applyPatches, type Patch } from "immer";
+import { nanoid } from "nanoid";
 import type { Project, Skeleton, Bone } from "../model/types";
-import { emptyProject } from "../model/factory";
+import { emptyProject, createSkeleton } from "../model/factory";
 
 enablePatches();
 
@@ -23,6 +24,7 @@ interface ProjectState {
 
   setActiveTool: (tool: ToolId) => void;
   setActiveBone: (id: string | null) => void;
+  setActiveSkeleton: (id: string) => void;
   setPlayhead: (t: number) => void;
 
   commit: (label: string, mutator: (draft: Project) => void) => void;
@@ -32,6 +34,10 @@ interface ProjectState {
   addBone: (parentId: string, x: number, y: number, length: number) => void;
   updateBone: (boneId: string, patch: Partial<Bone>) => void;
   replaceSkeleton: (skeleton: Skeleton) => void;
+
+  addSkeleton: (name?: string) => string;
+  removeSkeleton: (id: string) => void;
+  renameSkeleton: (id: string, name: string) => void;
 }
 
 export const useProjectStore = create<ProjectState>((set, get) => {
@@ -46,6 +52,11 @@ export const useProjectStore = create<ProjectState>((set, get) => {
 
     setActiveTool: (tool) => set({ activeTool: tool }),
     setActiveBone: (id) => set({ activeBoneId: id }),
+    setActiveSkeleton: (id) => {
+      const skel = get().project.skeletons.find((s) => s.id === id);
+      if (!skel) return;
+      set({ activeSkeletonId: id, activeBoneId: skel.bones[0]?.id ?? null });
+    },
     setPlayhead: (t) => set({ playheadTime: Math.max(0, t) }),
 
     commit: (label, mutator) => {
@@ -102,7 +113,7 @@ export const useProjectStore = create<ProjectState>((set, get) => {
         const parent = skel.bones.find((b) => b.id === parentId);
         if (!parent) return;
         skel.bones.push({
-          id: crypto.randomUUID().slice(0, 8),
+          id: nanoid(8),
           name: `bone${skel.bones.length}`,
           parent: parentId,
           x,
@@ -112,6 +123,36 @@ export const useProjectStore = create<ProjectState>((set, get) => {
           scaleY: 1,
           length,
         });
+      });
+    },
+
+    addSkeleton: (name) => {
+      const skel = createSkeleton(name);
+      get().commit("add skeleton", (draft) => {
+        draft.skeletons.push(skel);
+      });
+      set({ activeSkeletonId: skel.id, activeBoneId: skel.bones[0]?.id ?? null });
+      return skel.id;
+    },
+
+    removeSkeleton: (id) => {
+      const project = get().project;
+      if (project.skeletons.length <= 1) return;
+      get().commit("remove skeleton", (draft) => {
+        draft.skeletons = draft.skeletons.filter((s) => s.id !== id);
+      });
+      if (get().activeSkeletonId === id) {
+        const next = get().project.skeletons[0];
+        set({ activeSkeletonId: next.id, activeBoneId: next.bones[0]?.id ?? null });
+      }
+    },
+
+    renameSkeleton: (id, name) => {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      get().commit("rename skeleton", (draft) => {
+        const skel = draft.skeletons.find((s) => s.id === id);
+        if (skel) skel.name = trimmed;
       });
     },
 

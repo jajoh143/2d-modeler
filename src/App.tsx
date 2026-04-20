@@ -1,4 +1,7 @@
 import { PixiViewport } from "./viewport/PixiViewport";
+import { Rulers, RULER_THICKNESS } from "./viewport/Rulers";
+import { SkeletonTabs } from "./viewport/SkeletonTabs";
+import { ZoomIndicator } from "./viewport/ZoomIndicator";
 import { Outline } from "./panels/Outline";
 import { Inspector } from "./panels/Inspector";
 import { AssetBrowser } from "./panels/AssetBrowser";
@@ -17,7 +20,22 @@ export default function App() {
           <AssetBrowser />
         </aside>
         <main className="viewport-area">
-          <PixiViewport />
+          <SkeletonTabs />
+          <div className="viewport-canvas-wrap">
+            <Rulers />
+            <ZoomIndicator />
+            <div
+              style={{
+                position: "absolute",
+                top: RULER_THICKNESS,
+                left: RULER_THICKNESS,
+                right: 0,
+                bottom: 0,
+              }}
+            >
+              <PixiViewport />
+            </div>
+          </div>
         </main>
         <aside className="right-panel">
           <Inspector />

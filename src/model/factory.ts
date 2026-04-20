@@ -1,7 +1,7 @@
 import { nanoid } from "nanoid";
 import type { Bone, Project, Skeleton } from "./types";
 
-export function emptyProject(name = "Untitled"): Project {
+export function createSkeleton(name = "skeleton"): Skeleton {
   const rootBone: Bone = {
     id: nanoid(8),
     name: "root",
@@ -13,20 +13,21 @@ export function emptyProject(name = "Untitled"): Project {
     scaleY: 1,
     length: 0,
   };
-
-  const skeleton: Skeleton = {
+  return {
     id: nanoid(8),
-    name: "skeleton",
+    name,
     bones: [rootBone],
     slots: [],
     skins: [{ id: nanoid(8), name: "default", attachments: [] }],
     ikConstraints: [],
   };
+}
 
+export function emptyProject(name = "Untitled"): Project {
   return {
     meta: { name, version: "0.1.0", canvasWidth: 1920, canvasHeight: 1080 },
     assets: [],
-    skeletons: [skeleton],
+    skeletons: [createSkeleton()],
     animations: [],
   };
 }
