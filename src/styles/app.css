@@ -408,6 +408,49 @@ input[type="number"]:focus {
   border-color: var(--accent);
 }
 
+.ik-add-form {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin-bottom: 8px;
+}
+
+.ik-item {
+  display: grid;
+  gap: 4px;
+  padding: 6px 8px;
+  margin-bottom: 6px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.ik-row {
+  display: grid;
+  grid-template-columns: 50px 1fr 40px;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.ik-row input[type="range"] {
+  width: 100%;
+}
+
+.ik-row input[type="checkbox"] {
+  justify-self: start;
+}
+
+.ik-value {
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  text-align: right;
+}
+
 .timeline-area {
   background: var(--bg-1);
   border-top: 1px solid var(--border);

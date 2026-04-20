@@ -4,6 +4,7 @@ import { nanoid } from "nanoid";
 import type { Project, Skeleton, Bone, MeshAttachment, RegionAttachment } from "../model/types";
 import { emptyProject, createSkeleton } from "../model/factory";
 import { resolveBoneWorld, worldToLocal } from "../model/skeletonMath";
+import { resolvePose } from "../model/pose";
 import { regionToMeshGeometry, captureVertexRest, normalizeWeights } from "../model/mesh";
 
 enablePatches();
@@ -79,6 +80,14 @@ interface ProjectState {
   addSkin: (name?: string) => string;
   removeSkin: (id: string) => void;
   renameSkin: (id: string, name: string) => void;
+
+  // IK constraints (M6).
+  addIkConstraint: (bones: string[], target: string) => string;
+  removeIkConstraint: (id: string) => void;
+  updateIkConstraint: (
+    id: string,
+    patch: Partial<{ name: string; bones: string[]; target: string; mix: number; bendPositive: boolean }>,
+  ) => void;
 
   // Meshes (M5).
   convertSlotToMesh: (slotId: string, cols?: number, rows?: number) => void;
@@ -482,6 +491,46 @@ export const useProjectStore = create<
       });
     },
 
+    addIkConstraint: (bones, target) => {
+      if (bones.length === 0 || bones.length > 2) return "";
+      const id = nanoid(8);
+      const name = `ik${get().project.skeletons.find((s) => s.id === get().activeSkeletonId)?.ikConstraints.length ?? 0 + 1}`;
+      get().commit("add IK constraint", (draft) => {
+        const skel = draft.skeletons.find((s) => s.id === get().activeSkeletonId);
+        if (!skel) return;
+        skel.ikConstraints.push({
+          id,
+          name,
+          bones: [...bones],
+          target,
+          mix: 1,
+          bendPositive: true,
+        });
+      });
+      return id;
+    },
+
+    removeIkConstraint: (id) => {
+      get().commit("remove IK constraint", (draft) => {
+        const skel = draft.skeletons.find((s) => s.id === get().activeSkeletonId);
+        if (!skel) return;
+        skel.ikConstraints = skel.ikConstraints.filter((c) => c.id !== id);
+      });
+    },
+
+    updateIkConstraint: (id, patch) => {
+      get().commit("update IK constraint", (draft) => {
+        const skel = draft.skeletons.find((s) => s.id === get().activeSkeletonId);
+        const c = skel?.ikConstraints.find((c) => c.id === id);
+        if (!c) return;
+        if (patch.name !== undefined) c.name = patch.name;
+        if (patch.bones !== undefined) c.bones = [...patch.bones];
+        if (patch.target !== undefined) c.target = patch.target;
+        if (patch.mix !== undefined) c.mix = Math.max(0, Math.min(1, patch.mix));
+        if (patch.bendPositive !== undefined) c.bendPositive = patch.bendPositive;
+      });
+    },
+
     convertSlotToMesh: (slotId, cols = 5, rows = 5) => {
       const state = get();
       const skel = state.project.skeletons.find((s) => s.id === state.activeSkeletonId);
@@ -589,7 +638,8 @@ export const useProjectStore = create<
       if (!mesh) return;
       const vx = mesh.vertices[vertexIndex * 2];
       const vy = mesh.vertices[vertexIndex * 2 + 1];
-      const rest = captureVertexRest(skel, slot.bone, boneId, vx, vy);
+      const worlds = resolvePose(skel);
+      const rest = captureVertexRest(skel, slot.bone, boneId, vx, vy, worlds);
 
       get().commit("bind vertex", (draft) => {
         const m = findMeshForSlot(draft, state.activeSkeletonId, state.activeSkinId, slotId);
@@ -610,9 +660,12 @@ export const useProjectStore = create<
       ) as MeshAttachment | undefined;
       if (!mesh) return;
 
+      const worlds = resolvePose(skel);
       const rests: { x: number; y: number }[] = [];
       for (let i = 0; i < mesh.vertices.length; i += 2) {
-        rests.push(captureVertexRest(skel, slot.bone, boneId, mesh.vertices[i], mesh.vertices[i + 1]));
+        rests.push(
+          captureVertexRest(skel, slot.bone, boneId, mesh.vertices[i], mesh.vertices[i + 1], worlds),
+        );
       }
 
       get().commit("bind mesh to bone", (draft) => {

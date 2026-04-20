@@ -7,6 +7,7 @@ import { Inspector } from "./panels/Inspector";
 import { AssetBrowser } from "./panels/AssetBrowser";
 import { SlotsPanel } from "./panels/SlotsPanel";
 import { SkinManager } from "./panels/SkinManager";
+import { IkConstraintsPanel } from "./panels/IkConstraintsPanel";
 import { Timeline } from "./timeline/Timeline";
 import { Toolbar } from "./panels/Toolbar";
 import { MenuBar } from "./panels/MenuBar";
@@ -43,6 +44,7 @@ export default function App() {
         </main>
         <aside className="right-panel">
           <Inspector />
+          <IkConstraintsPanel />
         </aside>
       </div>
       <footer className="timeline-area">

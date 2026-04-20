@@ -79,14 +79,18 @@ export function regionToMeshGeometry(
 /** Skin a mesh attachment to produce world-space vertex positions. Single-bone
  *  case (empty weights or one entry 100%) short-circuits to a matrix-apply
  *  through the slot's main bone. Multi-bone case blends rest-local coords
- *  through each weighted bone's current world transform. */
+ *  through each weighted bone's current world transform.
+ *
+ *  Pass `worlds` if the caller already has a posed transform map — saves a
+ *  full recompute per mesh. */
 export function skinMesh(
   mesh: MeshAttachment,
   skeleton: Skeleton,
   slotBoneId: string,
+  worlds?: Map<string, WorldTransform>,
 ): Float32Array {
-  const worlds = resolveBoneWorld(skeleton);
-  const mainWorld = worlds.get(slotBoneId);
+  const transforms = worlds ?? resolveBoneWorld(skeleton);
+  const mainWorld = transforms.get(slotBoneId);
   const vCount = mesh.vertices.length / 2;
   const out = new Float32Array(mesh.vertices.length);
 
@@ -112,7 +116,7 @@ export function skinMesh(
     let wy = 0;
     let total = 0;
     for (const bw of weights) {
-      const bWorld = worlds.get(bw.bone);
+      const bWorld = transforms.get(bw.bone);
       if (!bWorld || bw.weight <= 0) continue;
       const p = applyWorld(bWorld, bw.x, bw.y);
       wx += p.x * bw.weight;
@@ -150,10 +154,11 @@ export function captureVertexRest(
   targetBoneId: string,
   vxMainLocal: number,
   vyMainLocal: number,
+  worlds?: Map<string, WorldTransform>,
 ): { x: number; y: number } {
-  const worlds = resolveBoneWorld(skeleton);
-  const main = worlds.get(mainBoneId);
-  const target = worlds.get(targetBoneId);
+  const transforms = worlds ?? resolveBoneWorld(skeleton);
+  const main = transforms.get(mainBoneId);
+  const target = transforms.get(targetBoneId);
   if (!main || !target) return { x: vxMainLocal, y: vyMainLocal };
   const world = applyWorld(main, vxMainLocal, vyMainLocal);
   return worldToLocal(target, world.x, world.y);

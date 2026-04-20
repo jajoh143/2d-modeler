@@ -24,7 +24,8 @@ import type {
   Skeleton,
   Skin,
 } from "../model/types";
-import { resolveBoneWorld, type WorldTransform } from "../model/skeletonMath";
+import { type WorldTransform } from "../model/skeletonMath";
+import { resolvePose } from "../model/pose";
 import { skinMesh } from "../model/mesh";
 import type { ToolId } from "../state/projectStore";
 
@@ -109,7 +110,7 @@ export function drawScene(
   }
 
   const px = 1 / worldScale;
-  const world = resolveBoneWorld(skeleton);
+  const world = resolvePose(skeleton);
 
   let activeMesh: MeshEditFrame | undefined;
   if (activeSkin) {
@@ -394,7 +395,7 @@ function drawAttachments(
       layer.attachments.addChild(sprite);
     } else if (att.kind === "mesh") {
       const mesh = att as MeshAttachment;
-      const skinned = skinMesh(mesh, skeleton, slot.bone);
+      const skinned = skinMesh(mesh, skeleton, slot.bone, worldTransforms);
       const geom = new MeshGeometry({
         positions: skinned,
         uvs: new Float32Array(mesh.uvs),
