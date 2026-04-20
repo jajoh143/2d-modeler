@@ -3,6 +3,7 @@ import { Application, Container, Graphics } from "pixi.js";
 import { useProjectStore } from "../state/projectStore";
 import { useViewportStore, niceStep } from "../state/viewportStore";
 import { resolveBoneWorld, worldToLocal } from "../model/skeletonMath";
+import { ASSET_DRAG_MIME } from "../panels/AssetBrowser";
 import {
   createSceneLayer,
   drawScene,
@@ -94,13 +95,17 @@ export function PixiViewport() {
       const redrawScene = () => {
         const state = useProjectStore.getState();
         const skeleton = state.project.skeletons.find((s) => s.id === state.activeSkeletonId);
+        const skin = skeleton?.skins.find((s) => s.id === state.activeSkinId) ?? skeleton?.skins[0];
         const showGizmos = state.activeTool === "select" || state.activeTool === "bone";
         bonesRef.current = drawScene(
           scene,
           skeleton,
+          state.project.assets,
+          skin,
           state.activeBoneId,
           world.scale.x,
           showGizmos,
+          redrawScene,
         );
       };
 
@@ -118,6 +123,7 @@ export function PixiViewport() {
       };
 
       const teardownInput = wireInput(app, world, pushCamera, redrawScene, dragRef, lastPanRef, bonesRef, sceneRef);
+      const teardownDrop = wireDropTarget(host, app, world);
       pushCamera();
 
       const ro = new ResizeObserver(() => pushCamera());
@@ -125,7 +131,7 @@ export function PixiViewport() {
 
       const unsub = useProjectStore.subscribe(redrawScene);
 
-      cleanups.push(() => ro.disconnect(), teardownInput, unsub);
+      cleanups.push(() => ro.disconnect(), teardownInput, teardownDrop, unsub);
     })();
 
     return () => {
@@ -470,4 +476,45 @@ function zoomAt(world: Container, screenX: number, screenY: number, factor: numb
   world.scale.set(next);
   world.x = screenX - lx * next;
   world.y = screenY - ly * next;
+}
+
+function wireDropTarget(host: HTMLDivElement, app: Application, world: Container): () => void {
+  const canvas = app.canvas;
+
+  const onDragOver = (e: DragEvent) => {
+    // Accept drops if carrying an asset id (asset browser) or a file.
+    const types = e.dataTransfer?.types ?? [];
+    if ((types as ReadonlyArray<string>).includes(ASSET_DRAG_MIME)) {
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+    }
+  };
+
+  const onDrop = (e: DragEvent) => {
+    const assetId = e.dataTransfer?.getData(ASSET_DRAG_MIME);
+    if (!assetId) return;
+    e.preventDefault();
+
+    const rect = canvas.getBoundingClientRect();
+    const cx = e.clientX - rect.left;
+    const cy = e.clientY - rect.top;
+    const wx = (cx - world.x) / world.scale.x;
+    const wy = (cy - world.y) / world.scale.y;
+
+    const store = useProjectStore.getState();
+    const boneId = store.activeBoneId;
+    if (!boneId) {
+      // eslint-disable-next-line no-console
+      console.warn("Drop ignored: no active bone to attach to.");
+      return;
+    }
+    store.addSlotWithAttachment(boneId, assetId, wx, wy);
+  };
+
+  host.addEventListener("dragover", onDragOver);
+  host.addEventListener("drop", onDrop);
+  return () => {
+    host.removeEventListener("dragover", onDragOver);
+    host.removeEventListener("drop", onDrop);
+  };
 }

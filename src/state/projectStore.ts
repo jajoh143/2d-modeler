@@ -3,6 +3,7 @@ import { produce, enablePatches, applyPatches, type Patch } from "immer";
 import { nanoid } from "nanoid";
 import type { Project, Skeleton, Bone } from "../model/types";
 import { emptyProject, createSkeleton } from "../model/factory";
+import { resolveBoneWorld, worldToLocal } from "../model/skeletonMath";
 
 enablePatches();
 
@@ -22,7 +23,9 @@ interface UndoEntry {
 interface ProjectState {
   project: Project;
   activeSkeletonId: string;
+  activeSkinId: string;
   activeBoneId: string | null;
+  activeSlotId: string | null;
   activeTool: ToolId;
   playheadTime: number;
   history: { past: UndoEntry[]; future: UndoEntry[] };
@@ -30,6 +33,8 @@ interface ProjectState {
   setActiveTool: (tool: ToolId) => void;
   setActiveBone: (id: string | null) => void;
   setActiveSkeleton: (id: string) => void;
+  setActiveSkin: (id: string) => void;
+  setActiveSlot: (id: string | null) => void;
   setPlayhead: (t: number) => void;
 
   commit: (label: string, mutator: (draft: Project) => void) => void;
@@ -50,6 +55,21 @@ interface ProjectState {
   addSkeleton: (name?: string) => string;
   removeSkeleton: (id: string) => void;
   renameSkeleton: (id: string, name: string) => void;
+
+  // Assets + slots + attachments + skins (M4).
+  addAsset: (name: string, dataUrl: string, width: number, height: number) => string;
+  removeAsset: (assetId: string) => void;
+  addSlotWithAttachment: (
+    boneId: string,
+    assetId: string,
+    worldX: number,
+    worldY: number,
+  ) => void;
+  moveSlotDrawOrder: (slotId: string, delta: number) => void;
+  setSlotAttachment: (slotId: string, attachmentName: string | null) => void;
+  addSkin: (name?: string) => string;
+  removeSkin: (id: string) => void;
+  renameSkin: (id: string, name: string) => void;
 }
 
 export const useProjectStore = create<
@@ -59,7 +79,9 @@ export const useProjectStore = create<
   return {
     project: initial,
     activeSkeletonId: initial.skeletons[0].id,
+    activeSkinId: initial.skeletons[0].skins[0].id,
     activeBoneId: initial.skeletons[0].bones[0].id,
+    activeSlotId: null,
     activeTool: "select",
     playheadTime: 0,
     history: { past: [], future: [] },
@@ -69,8 +91,18 @@ export const useProjectStore = create<
     setActiveSkeleton: (id) => {
       const skel = get().project.skeletons.find((s) => s.id === id);
       if (!skel) return;
-      set({ activeSkeletonId: id, activeBoneId: skel.bones[0]?.id ?? null });
+      set({
+        activeSkeletonId: id,
+        activeBoneId: skel.bones[0]?.id ?? null,
+        activeSkinId: skel.skins[0]?.id ?? "",
+        activeSlotId: null,
+      });
     },
+    setActiveSkin: (id) => {
+      const skel = get().project.skeletons.find((s) => s.id === get().activeSkeletonId);
+      if (skel?.skins.some((s) => s.id === id)) set({ activeSkinId: id });
+    },
+    setActiveSlot: (id) => set({ activeSlotId: id }),
     setPlayhead: (t) => set({ playheadTime: Math.max(0, t) }),
 
     commit: (label, mutator) => {
@@ -283,5 +315,172 @@ export const useProjectStore = create<
         _dragLabel: undefined,
       });
     },
+
+    addAsset: (name, dataUrl, width, height) => {
+      const id = nanoid(8);
+      get().commit("import asset", (draft) => {
+        draft.assets.push({ id, path: dataUrl, name, width, height });
+      });
+      return id;
+    },
+
+    removeAsset: (assetId) => {
+      get().commit("remove asset", (draft) => {
+        draft.assets = draft.assets.filter((a) => a.id !== assetId);
+        for (const skel of draft.skeletons) {
+          for (const skin of skel.skins) {
+            skin.attachments = skin.attachments.filter(
+              (att) => !("assetId" in att) || att.assetId !== assetId,
+            );
+          }
+        }
+      });
+    },
+
+    addSlotWithAttachment: (boneId, assetId, worldX, worldY) => {
+      const state = get();
+      const skelBefore = state.project.skeletons.find((s) => s.id === state.activeSkeletonId);
+      if (!skelBefore) return;
+      const asset = state.project.assets.find((a) => a.id === assetId);
+      if (!asset) return;
+      const bone = skelBefore.bones.find((b) => b.id === boneId);
+      if (!bone) return;
+
+      // Convert world drop point to bone-local offset; attachment (x, y) is
+      // stored in the slot's bone-local space.
+      const worlds = resolveBoneWorld(skelBefore);
+      const boneWorld = worlds.get(bone.id) ?? null;
+      const local = worldToLocal(boneWorld, worldX, worldY);
+
+      const baseName = sanitizeName(asset.name.replace(/\.[^.]+$/, ""));
+      const slotName = uniqueSlotName(skelBefore, baseName);
+      const attachmentName = slotName;
+      const slotId = nanoid(8);
+
+      get().commit("add slot + attachment", (draft) => {
+        const skel = draft.skeletons.find((s) => s.id === state.activeSkeletonId);
+        if (!skel) return;
+        const drawOrder = skel.slots.length;
+        skel.slots.push({
+          id: slotId,
+          name: slotName,
+          bone: boneId,
+          drawOrder,
+          attachment: attachmentName,
+        });
+        const skin = skel.skins.find((s) => s.id === state.activeSkinId) ?? skel.skins[0];
+        if (!skin) return;
+        skin.attachments.push({
+          kind: "region",
+          id: attachmentName,
+          slot: slotId,
+          assetId,
+          x: local.x,
+          y: local.y,
+          rotation: 0,
+          scaleX: 1,
+          scaleY: 1,
+        });
+      });
+      set({ activeSlotId: slotId });
+    },
+
+    moveSlotDrawOrder: (slotId, delta) => {
+      get().commit("reorder slot", (draft) => {
+        const skel = draft.skeletons.find((s) => s.id === get().activeSkeletonId);
+        if (!skel) return;
+        // Sort by current drawOrder, then renumber after swap so ties resolve.
+        const sorted = [...skel.slots].sort((a, b) => a.drawOrder - b.drawOrder);
+        const idx = sorted.findIndex((s) => s.id === slotId);
+        if (idx < 0) return;
+        const newIdx = Math.max(0, Math.min(sorted.length - 1, idx + delta));
+        if (newIdx === idx) return;
+        const [moved] = sorted.splice(idx, 1);
+        sorted.splice(newIdx, 0, moved);
+        for (let i = 0; i < sorted.length; i++) {
+          const slot = skel.slots.find((s) => s.id === sorted[i].id);
+          if (slot) slot.drawOrder = i;
+        }
+      });
+    },
+
+    setSlotAttachment: (slotId, attachmentName) => {
+      get().commit("set slot attachment", (draft) => {
+        const skel = draft.skeletons.find((s) => s.id === get().activeSkeletonId);
+        const slot = skel?.slots.find((s) => s.id === slotId);
+        if (slot) slot.attachment = attachmentName;
+      });
+    },
+
+    addSkin: (name) => {
+      const state = get();
+      const skel = state.project.skeletons.find((s) => s.id === state.activeSkeletonId);
+      if (!skel) return "";
+      const skinName = uniqueSkinName(skel, name ?? "skin");
+      const id = nanoid(8);
+      // Clone attachments from the current default/active skin so the new skin
+      // renders identically until edited.
+      const source = skel.skins.find((s) => s.id === state.activeSkinId) ?? skel.skins[0];
+      const clonedAttachments = source ? source.attachments.map((a) => ({ ...a })) : [];
+      get().commit("add skin", (draft) => {
+        const dskel = draft.skeletons.find((s) => s.id === state.activeSkeletonId);
+        if (!dskel) return;
+        dskel.skins.push({ id, name: skinName, attachments: clonedAttachments });
+      });
+      set({ activeSkinId: id });
+      return id;
+    },
+
+    removeSkin: (id) => {
+      const state = get();
+      const skel = state.project.skeletons.find((s) => s.id === state.activeSkeletonId);
+      if (!skel) return;
+      if (skel.skins.length <= 1) return;
+      get().commit("remove skin", (draft) => {
+        const dskel = draft.skeletons.find((s) => s.id === state.activeSkeletonId);
+        if (!dskel) return;
+        dskel.skins = dskel.skins.filter((s) => s.id !== id);
+      });
+      if (get().activeSkinId === id) {
+        const next = get().project.skeletons.find((s) => s.id === state.activeSkeletonId)?.skins[0];
+        if (next) set({ activeSkinId: next.id });
+      }
+    },
+
+    renameSkin: (id, name) => {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      get().commit("rename skin", (draft) => {
+        const skel = draft.skeletons.find((s) => s.id === get().activeSkeletonId);
+        const skin = skel?.skins.find((s) => s.id === id);
+        if (skin) skin.name = trimmed;
+      });
+    },
   };
 });
+
+function sanitizeName(s: string): string {
+  const cleaned = s.replace(/[^\w.-]/g, "_").replace(/^_+|_+$/g, "");
+  return cleaned || "slot";
+}
+
+function uniqueSlotName(skel: Skeleton, base: string): string {
+  const existing = new Set(skel.slots.map((s) => s.name));
+  if (!existing.has(base)) return base;
+  for (let i = 2; i < 1000; i++) {
+    const candidate = `${base}_${i}`;
+    if (!existing.has(candidate)) return candidate;
+  }
+  return `${base}_${nanoid(4)}`;
+}
+
+function uniqueSkinName(skel: Skeleton, base: string): string {
+  const existing = new Set(skel.skins.map((s) => s.name));
+  if (!existing.has(base)) return base;
+  for (let i = 2; i < 1000; i++) {
+    const candidate = `${base}_${i}`;
+    if (!existing.has(candidate)) return candidate;
+  }
+  return `${base}_${nanoid(4)}`;
+}
+

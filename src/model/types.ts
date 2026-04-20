@@ -16,6 +16,11 @@ export interface ProjectMeta {
 
 export interface Asset {
   id: string;
+  /** Display name (often the original filename). */
+  name: string;
+  /** Pixi-loadable URL. For imported PNGs this is a data URL; for saved
+   *  projects it may become a relative file:// path after we implement the
+   *  project bundle writer (M10). */
   path: string;
   width: number;
   height: number;

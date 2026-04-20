@@ -5,6 +5,8 @@ import { ZoomIndicator } from "./viewport/ZoomIndicator";
 import { Outline } from "./panels/Outline";
 import { Inspector } from "./panels/Inspector";
 import { AssetBrowser } from "./panels/AssetBrowser";
+import { SlotsPanel } from "./panels/SlotsPanel";
+import { SkinManager } from "./panels/SkinManager";
 import { Timeline } from "./timeline/Timeline";
 import { Toolbar } from "./panels/Toolbar";
 import { MenuBar } from "./panels/MenuBar";
@@ -17,10 +19,12 @@ export default function App() {
       <div className="app-body">
         <aside className="left-panel">
           <Outline />
+          <SlotsPanel />
           <AssetBrowser />
         </aside>
         <main className="viewport-area">
           <SkeletonTabs />
+          <SkinManager />
           <div className="viewport-canvas-wrap">
             <Rulers />
             <ZoomIndicator />

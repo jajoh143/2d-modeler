@@ -22,6 +22,7 @@ pub struct ProjectMeta {
 #[serde(rename_all = "camelCase")]
 pub struct Asset {
     pub id: String,
+    pub name: String,
     pub path: String,
     pub width: u32,
     pub height: u32,

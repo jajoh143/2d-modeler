@@ -1,13 +1,14 @@
 /**
- * Bone + gizmo rendering and hit-testing for the viewport.
+ * Bone + attachment + gizmo rendering and hit-testing for the viewport.
  *
- * Bones are drawn inside the world container (so they pan/zoom with the
- * camera), but stroke widths and handle radii are divided by the camera
- * scale so they stay constant in screen pixels.
+ * Drawing lives inside the world container (panned/zoomed with the camera),
+ * but stroke widths and gizmo radii are divided by camera scale so they stay
+ * constant in screen pixels. Attachment sprites render in world space so
+ * their PNG pixels scale naturally with zoom.
  */
 
-import { Container, Graphics } from "pixi.js";
-import type { Bone, Skeleton } from "../model/types";
+import { Assets, Container, Graphics, Sprite, type Texture } from "pixi.js";
+import type { Asset, Bone, RegionAttachment, Skeleton, Skin } from "../model/types";
 import { resolveBoneWorld, type WorldTransform } from "../model/skeletonMath";
 
 export interface BoneScreen {
@@ -18,6 +19,7 @@ export interface BoneScreen {
 
 export interface SceneLayer {
   container: Container;
+  attachments: Container;
   bones: Graphics;
   selection: Graphics;
   gizmos: Graphics;
@@ -27,13 +29,15 @@ export interface SceneLayer {
 export function createSceneLayer(): SceneLayer {
   const container = new Container();
   container.label = "scene";
+  const attachments = new Container();
+  attachments.label = "attachments";
   const bones = new Graphics();
   const selection = new Graphics();
   const gizmos = new Graphics();
   const preview = new Graphics();
-  // Draw order: dim bones, selection highlight, gizmos, preview.
-  container.addChild(bones, selection, gizmos, preview);
-  return { container, bones, selection, gizmos, preview };
+  // Draw order: attachment sprites at the back, then bone overlay on top.
+  container.addChild(attachments, bones, selection, gizmos, preview);
+  return { container, attachments, bones, selection, gizmos, preview };
 }
 
 const COLOR_BONE = 0x5aa9ff;
@@ -50,19 +54,31 @@ const HIT_PIXELS = 6;
 export function drawScene(
   layer: SceneLayer,
   skeleton: Skeleton | undefined,
+  assets: Asset[],
+  activeSkin: Skin | undefined,
   activeBoneId: string | null,
   worldScale: number,
   showGizmos: boolean,
+  onTextureReady: () => void,
 ): BoneScreen[] {
   layer.bones.clear();
   layer.selection.clear();
   layer.gizmos.clear();
   layer.preview.clear();
 
-  if (!skeleton) return [];
+  if (!skeleton) {
+    disposeSprites(layer);
+    return [];
+  }
 
   const px = 1 / worldScale;
   const world = resolveBoneWorld(skeleton);
+
+  if (activeSkin) {
+    drawAttachments(layer, skeleton, assets, activeSkin, world, onTextureReady);
+  } else {
+    disposeSprites(layer);
+  }
 
   const list: BoneScreen[] = [];
   for (const bone of skeleton.bones) {
@@ -203,4 +219,85 @@ function pointToSegmentDistSq(
   const cx = ax + t * dx;
   const cy = ay + t * dy;
   return dist2(px, py, cx, cy);
+}
+
+// ──────────────────────────────────────────────────────────────────
+// Attachment rendering
+// ──────────────────────────────────────────────────────────────────
+
+// Shared texture cache. Keyed by asset id so two sprites of the same PNG share
+// the same GPU texture. Textures are kept alive across redraws.
+const textureCache = new Map<string, Texture>();
+const loadingAssets = new Set<string>();
+
+function ensureTexture(assetId: string, url: string, onReady: () => void): Texture | null {
+  const cached = textureCache.get(assetId);
+  if (cached) return cached;
+  if (loadingAssets.has(assetId)) return null;
+  loadingAssets.add(assetId);
+  Assets.load<Texture>(url)
+    .then((tex) => {
+      textureCache.set(assetId, tex);
+      loadingAssets.delete(assetId);
+      onReady();
+    })
+    .catch((err) => {
+      loadingAssets.delete(assetId);
+      // eslint-disable-next-line no-console
+      console.error(`Failed to load asset ${assetId}:`, err);
+    });
+  return null;
+}
+
+function disposeSprites(layer: SceneLayer) {
+  const removed = layer.attachments.removeChildren();
+  for (const s of removed) s.destroy({ children: false, texture: false });
+}
+
+function drawAttachments(
+  layer: SceneLayer,
+  skeleton: Skeleton,
+  assets: Asset[],
+  skin: Skin,
+  worldTransforms: Map<string, WorldTransform>,
+  onReady: () => void,
+) {
+  disposeSprites(layer);
+
+  const sortedSlots = [...skeleton.slots].sort((a, b) => a.drawOrder - b.drawOrder);
+  for (const slot of sortedSlots) {
+    if (!slot.attachment) continue;
+
+    const attachment = skin.attachments.find(
+      (a) => a.slot === slot.id && a.id === slot.attachment && a.kind === "region",
+    ) as RegionAttachment | undefined;
+    if (!attachment) continue;
+
+    const asset = assets.find((a) => a.id === attachment.assetId);
+    if (!asset) continue;
+
+    const tex = ensureTexture(asset.id, asset.path, onReady);
+    if (!tex) continue; // Still loading; onReady will trigger a redraw.
+
+    const boneWorld = worldTransforms.get(slot.bone);
+    if (!boneWorld) continue;
+
+    const cos = Math.cos(boneWorld.rotation);
+    const sin = Math.sin(boneWorld.rotation);
+    const lx = attachment.x * boneWorld.scaleX;
+    const ly = attachment.y * boneWorld.scaleY;
+    const wx = boneWorld.x + cos * lx - sin * ly;
+    const wy = boneWorld.y + sin * lx + cos * ly;
+
+    const sprite = new Sprite(tex);
+    sprite.anchor.set(0.5);
+    sprite.position.set(wx, wy);
+    sprite.rotation = boneWorld.rotation + attachment.rotation;
+    sprite.scale.set(
+      boneWorld.scaleX * attachment.scaleX,
+      boneWorld.scaleY * attachment.scaleY,
+    );
+    sprite.label = slot.id;
+    layer.attachments.addChild(sprite);
+  }
 }
