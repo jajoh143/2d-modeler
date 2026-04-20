@@ -451,6 +451,217 @@ input[type="number"]:focus {
   text-align: right;
 }
 
+.timeline-root {
+  display: grid;
+  grid-template-rows: 32px 1fr;
+  height: 100%;
+}
+
+.timeline-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow-x: auto;
+}
+
+.tl-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text);
+  padding: 3px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.tl-btn:hover:not(:disabled) {
+  background: var(--bg-1);
+}
+
+.tl-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.tl-btn.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.tl-btn.recording {
+  color: #ff5a5a;
+  border-color: #ff5a5a;
+}
+
+.tl-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 4px;
+}
+
+.tl-row input[type="number"] {
+  width: 50px;
+}
+
+.tl-select {
+  background: var(--bg-0);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 3px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+  min-width: 120px;
+}
+
+.tl-sep {
+  width: 1px;
+  height: 18px;
+  background: var(--border);
+  margin: 0 4px;
+}
+
+.tl-time {
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  padding: 0 6px;
+}
+
+.timeline-body {
+  overflow: hidden;
+  background: var(--bg-1);
+  display: flex;
+  flex-direction: column;
+}
+
+.timeline-empty {
+  padding: 14px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.dopesheet {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.dopesheet-header {
+  display: flex;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.dopesheet-scroll {
+  overflow: auto;
+  flex: 1;
+}
+
+.dopesheet-empty {
+  padding: 12px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.dopesheet-row {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+}
+
+.dopesheet-row-label {
+  flex-shrink: 0;
+  padding: 0 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: var(--bg-2);
+  border-right: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dopesheet-row-lane {
+  position: relative;
+  flex: 1;
+  cursor: pointer;
+  background: var(--bg-0);
+}
+
+.dopesheet-row-lane:hover {
+  background: #1c1e28;
+}
+
+.dopesheet-key {
+  position: absolute;
+  background: var(--accent);
+  border: 1px solid #fff;
+  border-radius: 50%;
+  box-sizing: border-box;
+  cursor: pointer;
+  z-index: 2;
+}
+
+.dopesheet-key:hover {
+  background: #ffd166;
+}
+
+.dopesheet-ruler {
+  flex: 1;
+  position: relative;
+  height: 22px;
+  cursor: ew-resize;
+  color: var(--text-dim);
+}
+
+.dopesheet-tick {
+  position: absolute;
+  top: 0;
+  width: 1px;
+  height: 100%;
+  background: var(--border);
+  transform: translateX(-0.5px);
+}
+
+.dopesheet-tick span {
+  position: absolute;
+  top: 2px;
+  left: 3px;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.dopesheet-playhead-marker {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  height: 100%;
+  background: var(--accent);
+  transform: translateX(-1px);
+  pointer-events: none;
+  z-index: 3;
+}
+
+.dopesheet-playhead-line {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  background: var(--accent);
+  opacity: 0.6;
+  transform: translateX(-1px);
+  pointer-events: none;
+  z-index: 3;
+}
+
 .timeline-area {
   background: var(--bg-1);
   border-top: 1px solid var(--border);

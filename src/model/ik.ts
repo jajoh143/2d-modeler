@@ -62,13 +62,20 @@ export function solveIk2(
   };
 }
 
-/** Run every IK constraint in order and return a rotation-override map that
- *  can be fed back into resolvePosedWorld to render the posed skeleton. */
+/** Run every IK constraint in order and return a pose-override map. If
+ *  `baseOverrides` is supplied (typically from animation evaluation), IK is
+ *  applied on top of that pose — the solver sees the animated world when
+ *  computing target angles and merges its rotation override with the
+ *  animation's non-rotation channels. */
 export function solveIkConstraints(
   skeleton: Skeleton,
   constraints: IkConstraint[],
+  baseOverrides?: Map<string, PoseOverride>,
 ): Map<string, PoseOverride> {
   const overrides = new Map<string, PoseOverride>();
+  if (baseOverrides) {
+    for (const [k, v] of baseOverrides) overrides.set(k, { ...v });
+  }
   if (!constraints.length) return overrides;
 
   const boneById = new Map(skeleton.bones.map((b) => [b.id, b]));
@@ -96,7 +103,10 @@ export function solveIkConstraints(
       const desiredLocal = desiredWorld - parentWorldRot;
       const currentLocal = overrides.get(boneId)?.rotation ?? bone.rotation;
 
-      overrides.set(boneId, { rotation: lerpAngle(currentLocal, desiredLocal, c.mix) });
+      overrides.set(boneId, {
+        ...overrides.get(boneId),
+        rotation: lerpAngle(currentLocal, desiredLocal, c.mix),
+      });
       continue;
     }
 
@@ -132,9 +142,11 @@ export function solveIkConstraints(
     const curChildLocal = overrides.get(childId)?.rotation ?? childBone.rotation;
 
     overrides.set(parentId, {
+      ...overrides.get(parentId),
       rotation: lerpAngle(curParentLocal, desiredParentLocal, c.mix),
     });
     overrides.set(childId, {
+      ...overrides.get(childId),
       rotation: lerpAngle(curChildLocal, desiredChildLocal, c.mix),
     });
   }

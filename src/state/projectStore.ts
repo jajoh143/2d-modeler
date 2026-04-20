@@ -1,11 +1,21 @@
 import { create } from "zustand";
 import { produce, enablePatches, applyPatches, type Patch } from "immer";
 import { nanoid } from "nanoid";
-import type { Project, Skeleton, Bone, MeshAttachment, RegionAttachment } from "../model/types";
+import type {
+  Animation,
+  Bone,
+  Keyframe,
+  MeshAttachment,
+  Project,
+  RegionAttachment,
+  Skeleton,
+  Track,
+} from "../model/types";
 import { emptyProject, createSkeleton } from "../model/factory";
 import { resolveBoneWorld, worldToLocal } from "../model/skeletonMath";
 import { resolvePose } from "../model/pose";
 import { regionToMeshGeometry, captureVertexRest, normalizeWeights } from "../model/mesh";
+import { upsertKeyframe, removeKeyframeAt as removeKf } from "../model/animationEval";
 
 enablePatches();
 
@@ -36,8 +46,12 @@ interface ProjectState {
   activeSkinId: string;
   activeBoneId: string | null;
   activeSlotId: string | null;
+  activeAnimationId: string | null;
   activeTool: ToolId;
   playheadTime: number;
+  isPlaying: boolean;
+  isLooping: boolean;
+  isRecording: boolean;
   history: { past: UndoEntry[]; future: UndoEntry[] };
 
   setActiveTool: (tool: ToolId) => void;
@@ -81,6 +95,24 @@ interface ProjectState {
   removeSkin: (id: string) => void;
   renameSkin: (id: string, name: string) => void;
 
+  // Animation (M7).
+  setActiveAnimation: (id: string | null) => void;
+  setPlaying: (playing: boolean) => void;
+  togglePlaying: () => void;
+  setLooping: (loop: boolean) => void;
+  setRecording: (rec: boolean) => void;
+  addAnimation: (name?: string) => string;
+  removeAnimation: (id: string) => void;
+  renameAnimation: (id: string, name: string) => void;
+  setAnimationDuration: (id: string, duration: number) => void;
+  setAnimationFps: (id: string, fps: number) => void;
+  /** Insert/replace rotate+translate+scale keys at `time` for the given bone
+   *  using the bone's current setup-pose values. Creates tracks as needed. */
+  insertBoneKeyframesAt: (boneId: string, time: number) => void;
+  removeKeyframeAt: (trackKind: Track["kind"], boneOrSlot: string, time: number) => void;
+  /** Set current playhead as a keyframe for the active bone. */
+  insertKeyAtPlayhead: () => void;
+
   // IK constraints (M6).
   addIkConstraint: (bones: string[], target: string) => string;
   removeIkConstraint: (id: string) => void;
@@ -116,8 +148,12 @@ export const useProjectStore = create<
     activeSkinId: initial.skeletons[0].skins[0].id,
     activeBoneId: initial.skeletons[0].bones[0].id,
     activeSlotId: null,
+    activeAnimationId: null,
     activeTool: "select",
     playheadTime: 0,
+    isPlaying: false,
+    isLooping: true,
+    isRecording: false,
     history: { past: [], future: [] },
 
     setActiveTool: (tool) => set({ activeTool: tool }),
@@ -275,6 +311,10 @@ export const useProjectStore = create<
         if (!bone) return;
         Object.assign(bone, patch);
       });
+      const s = get();
+      if (s.isRecording && s.activeAnimationId) {
+        s.insertBoneKeyframesAt(boneId, s.playheadTime);
+      }
     },
 
     replaceSkeleton: (skeleton) => {
@@ -333,6 +373,10 @@ export const useProjectStore = create<
         if (bone) Object.assign(bone, finalCopy);
       });
       set({ _dragSnapshot: undefined, _dragLabel: undefined });
+      const s = get();
+      if (s.isRecording && s.activeAnimationId) {
+        s.insertBoneKeyframesAt(snap.boneId, s.playheadTime);
+      }
     },
 
     cancelBoneDrag: () => {
@@ -491,6 +535,112 @@ export const useProjectStore = create<
       });
     },
 
+    setActiveAnimation: (id) => set({ activeAnimationId: id, playheadTime: 0 }),
+    setPlaying: (playing) => set({ isPlaying: playing }),
+    togglePlaying: () => set((s) => ({ isPlaying: !s.isPlaying })),
+    setLooping: (loop) => set({ isLooping: loop }),
+    setRecording: (rec) => set({ isRecording: rec }),
+
+    addAnimation: (name) => {
+      const state = get();
+      const skeletonId = state.activeSkeletonId;
+      const existing = state.project.animations.filter((a) => a.skeleton === skeletonId);
+      const baseName = name ?? `animation${existing.length + 1}`;
+      const uniqueName = uniqueAnimationName(state.project.animations, baseName);
+      const id = nanoid(8);
+      get().commit("add animation", (draft) => {
+        draft.animations.push({
+          id,
+          name: uniqueName,
+          skeleton: skeletonId,
+          duration: 2,
+          fps: 30,
+          tracks: [],
+        });
+      });
+      set({ activeAnimationId: id, playheadTime: 0 });
+      return id;
+    },
+
+    removeAnimation: (id) => {
+      get().commit("remove animation", (draft) => {
+        draft.animations = draft.animations.filter((a) => a.id !== id);
+      });
+      if (get().activeAnimationId === id) {
+        set({ activeAnimationId: null, isPlaying: false, playheadTime: 0 });
+      }
+    },
+
+    renameAnimation: (id, name) => {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      get().commit("rename animation", (draft) => {
+        const a = draft.animations.find((a) => a.id === id);
+        if (a) a.name = trimmed;
+      });
+    },
+
+    setAnimationDuration: (id, duration) => {
+      const clamped = Math.max(0.01, duration);
+      get().commit("set duration", (draft) => {
+        const a = draft.animations.find((a) => a.id === id);
+        if (a) a.duration = clamped;
+      });
+    },
+
+    setAnimationFps: (id, fps) => {
+      const clamped = Math.max(1, Math.min(240, Math.round(fps)));
+      get().commit("set fps", (draft) => {
+        const a = draft.animations.find((a) => a.id === id);
+        if (a) a.fps = clamped;
+      });
+    },
+
+    insertBoneKeyframesAt: (boneId, time) => {
+      const state = get();
+      const anim = state.activeAnimationId
+        ? state.project.animations.find((a) => a.id === state.activeAnimationId)
+        : undefined;
+      if (!anim) return;
+      const skel = state.project.skeletons.find((s) => s.id === state.activeSkeletonId);
+      const bone = skel?.bones.find((b) => b.id === boneId);
+      if (!bone) return;
+      const t = Math.max(0, Math.min(anim.duration, time));
+
+      get().commit("insert keyframe", (draft) => {
+        const a = draft.animations.find((a) => a.id === anim.id);
+        if (!a) return;
+        upsertKeyframe(ensureRotateKeys(a, boneId), t, bone.rotation);
+        upsertKeyframe(ensureTranslateKeys(a, boneId), t, [bone.x, bone.y]);
+        upsertKeyframe(ensureScaleKeys(a, boneId), t, [bone.scaleX, bone.scaleY]);
+      });
+    },
+
+    removeKeyframeAt: (trackKind, boneOrSlot, time) => {
+      const state = get();
+      if (!state.activeAnimationId) return;
+      get().commit("remove keyframe", (draft) => {
+        const a = draft.animations.find((a) => a.id === state.activeAnimationId);
+        if (!a) return;
+        for (const track of a.tracks) {
+          if (track.kind !== trackKind) continue;
+          if (trackKind === "slotAttachment") {
+            if (track.slot !== boneOrSlot) continue;
+          } else if (track.bone !== boneOrSlot) {
+            continue;
+          }
+          removeKf(track.keyframes, time);
+          return;
+        }
+      });
+    },
+
+    insertKeyAtPlayhead: () => {
+      const state = get();
+      if (!state.activeBoneId) return;
+      state.insertBoneKeyframesAt(state.activeBoneId, state.playheadTime);
+    },
+
     addIkConstraint: (bones, target) => {
       if (bones.length === 0 || bones.length > 2) return "";
       const id = nanoid(8);
@@ -638,7 +788,7 @@ export const useProjectStore = create<
       if (!mesh) return;
       const vx = mesh.vertices[vertexIndex * 2];
       const vy = mesh.vertices[vertexIndex * 2 + 1];
-      const worlds = resolvePose(skel);
+      const worlds = resolvePose(skel).worlds;
       const rest = captureVertexRest(skel, slot.bone, boneId, vx, vy, worlds);
 
       get().commit("bind vertex", (draft) => {
@@ -660,7 +810,7 @@ export const useProjectStore = create<
       ) as MeshAttachment | undefined;
       if (!mesh) return;
 
-      const worlds = resolvePose(skel);
+      const worlds = resolvePose(skel).worlds;
       const rests: { x: number; y: number }[] = [];
       for (let i = 0; i < mesh.vertices.length; i += 2) {
         rests.push(
@@ -756,6 +906,49 @@ export const useProjectStore = create<
     },
   };
 });
+
+function ensureRotateKeys(animation: Animation, boneId: string): Keyframe<number>[] {
+  for (const t of animation.tracks) {
+    if (t.kind === "boneRotate" && t.bone === boneId) return t.keyframes;
+  }
+  const track: Track = { kind: "boneRotate", bone: boneId, keyframes: [] };
+  animation.tracks.push(track);
+  return (track as Extract<Track, { kind: "boneRotate" }>).keyframes;
+}
+
+function ensureTranslateKeys(
+  animation: Animation,
+  boneId: string,
+): Keyframe<[number, number]>[] {
+  for (const t of animation.tracks) {
+    if (t.kind === "boneTranslate" && t.bone === boneId) return t.keyframes;
+  }
+  const track: Track = { kind: "boneTranslate", bone: boneId, keyframes: [] };
+  animation.tracks.push(track);
+  return (track as Extract<Track, { kind: "boneTranslate" }>).keyframes;
+}
+
+function ensureScaleKeys(
+  animation: Animation,
+  boneId: string,
+): Keyframe<[number, number]>[] {
+  for (const t of animation.tracks) {
+    if (t.kind === "boneScale" && t.bone === boneId) return t.keyframes;
+  }
+  const track: Track = { kind: "boneScale", bone: boneId, keyframes: [] };
+  animation.tracks.push(track);
+  return (track as Extract<Track, { kind: "boneScale" }>).keyframes;
+}
+
+function uniqueAnimationName(animations: Animation[], base: string): string {
+  const existing = new Set(animations.map((a) => a.name));
+  if (!existing.has(base)) return base;
+  for (let i = 2; i < 1000; i++) {
+    const candidate = `${base}_${i}`;
+    if (!existing.has(candidate)) return candidate;
+  }
+  return `${base}_${nanoid(4)}`;
+}
 
 function findMeshForSlot(
   project: Project,

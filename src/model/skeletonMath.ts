@@ -8,11 +8,16 @@ export interface WorldTransform {
   scaleY: number;
 }
 
-/** Per-bone rotation override, applied in place of bone.rotation when
- *  resolving world transforms. Used by the IK solver to pose bones without
- *  mutating the rest/setup pose stored on the bones themselves. */
+/** Per-bone transform override, applied in place of the bone's setup-pose
+ *  values when resolving world transforms. Populated by animation evaluation
+ *  (x/y/rotation/scale from keyframe tracks) and the IK solver (rotation
+ *  only, stacked on top of animation). */
 export interface PoseOverride {
   rotation?: number;
+  x?: number;
+  y?: number;
+  scaleX?: number;
+  scaleY?: number;
 }
 
 /** Resolve each bone's world-space transform by walking the parent chain.
@@ -27,44 +32,50 @@ export function resolvePosedWorld(
 
   const cache = new Map<string, WorldTransform>();
 
-  const localRotation = (bone: Bone): number => {
+  const localValues = (bone: Bone) => {
     const o = overrides?.get(bone.id);
-    return o?.rotation ?? bone.rotation;
+    return {
+      x: o?.x ?? bone.x,
+      y: o?.y ?? bone.y,
+      rotation: o?.rotation ?? bone.rotation,
+      scaleX: o?.scaleX ?? bone.scaleX,
+      scaleY: o?.scaleY ?? bone.scaleY,
+    };
   };
 
   const resolve = (bone: Bone): WorldTransform => {
     const cached = cache.get(bone.id);
     if (cached) return cached;
 
-    const rot = localRotation(bone);
+    const lv = localValues(bone);
 
     if (!bone.parent) {
       const wt: WorldTransform = {
-        x: bone.x,
-        y: bone.y,
-        rotation: rot,
-        scaleX: bone.scaleX,
-        scaleY: bone.scaleY,
+        x: lv.x,
+        y: lv.y,
+        rotation: lv.rotation,
+        scaleX: lv.scaleX,
+        scaleY: lv.scaleY,
       };
       cache.set(bone.id, wt);
       return wt;
     }
 
     const parent = byId.get(bone.parent);
-    if (!parent) return { x: bone.x, y: bone.y, rotation: rot, scaleX: 1, scaleY: 1 };
+    if (!parent) return { x: lv.x, y: lv.y, rotation: lv.rotation, scaleX: lv.scaleX, scaleY: lv.scaleY };
     const pw = resolve(parent);
 
     const cos = Math.cos(pw.rotation);
     const sin = Math.sin(pw.rotation);
-    const localX = bone.x * pw.scaleX;
-    const localY = bone.y * pw.scaleY;
+    const localX = lv.x * pw.scaleX;
+    const localY = lv.y * pw.scaleY;
 
     const wt: WorldTransform = {
       x: pw.x + cos * localX - sin * localY,
       y: pw.y + sin * localX + cos * localY,
-      rotation: pw.rotation + rot,
-      scaleX: pw.scaleX * bone.scaleX,
-      scaleY: pw.scaleY * bone.scaleY,
+      rotation: pw.rotation + lv.rotation,
+      scaleX: pw.scaleX * lv.scaleX,
+      scaleY: pw.scaleY * lv.scaleY,
     };
     cache.set(bone.id, wt);
     return wt;

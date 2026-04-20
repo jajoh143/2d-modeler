@@ -9,6 +9,7 @@ import { SlotsPanel } from "./panels/SlotsPanel";
 import { SkinManager } from "./panels/SkinManager";
 import { IkConstraintsPanel } from "./panels/IkConstraintsPanel";
 import { Timeline } from "./timeline/Timeline";
+import { PlaybackLoop } from "./timeline/PlaybackLoop";
 import { Toolbar } from "./panels/Toolbar";
 import { MenuBar } from "./panels/MenuBar";
 
@@ -50,6 +51,7 @@ export default function App() {
       <footer className="timeline-area">
         <Timeline />
       </footer>
+      <PlaybackLoop />
     </div>
   );
 }

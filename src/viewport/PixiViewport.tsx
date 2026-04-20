@@ -102,6 +102,9 @@ export function PixiViewport() {
         const state = useProjectStore.getState();
         const skeleton = state.project.skeletons.find((s) => s.id === state.activeSkeletonId);
         const skin = skeleton?.skins.find((s) => s.id === state.activeSkinId) ?? skeleton?.skins[0];
+        const animation = state.activeAnimationId
+          ? state.project.animations.find((a) => a.id === state.activeAnimationId)
+          : undefined;
         const frame = drawScene(
           scene,
           skeleton,
@@ -111,6 +114,8 @@ export function PixiViewport() {
           state.activeSlotId,
           state.activeTool,
           world.scale.x,
+          animation,
+          state.playheadTime,
           redrawScene,
         );
         bonesRef.current = frame.bones;
@@ -511,6 +516,19 @@ function wireInput(
       if (store.activeBoneId) {
         e.preventDefault();
         store.removeBone(store.activeBoneId);
+      }
+    } else if (e.key === " ") {
+      const anim = store.activeAnimationId
+        ? store.project.animations.find((a) => a.id === store.activeAnimationId)
+        : undefined;
+      if (anim) {
+        e.preventDefault();
+        store.togglePlaying();
+      }
+    } else if (e.key === "k" || e.key === "K") {
+      if (store.activeBoneId && store.activeAnimationId) {
+        e.preventDefault();
+        store.insertKeyAtPlayhead();
       }
     } else if (e.key === "Escape") {
       if (dragRef.current) {

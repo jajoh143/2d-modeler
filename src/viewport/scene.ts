@@ -17,6 +17,7 @@ import {
   type Texture,
 } from "pixi.js";
 import type {
+  Animation,
   Asset,
   Bone,
   MeshAttachment,
@@ -96,6 +97,8 @@ export function drawScene(
   activeSlotId: string | null,
   activeTool: ToolId,
   worldScale: number,
+  animation: Animation | undefined,
+  time: number,
   onTextureReady: () => void,
 ): SceneFrame {
   layer.bones.clear();
@@ -110,7 +113,9 @@ export function drawScene(
   }
 
   const px = 1 / worldScale;
-  const world = resolvePose(skeleton);
+  const pose = resolvePose(skeleton, { animation, time });
+  const world = pose.worlds;
+  const slotOverrides = pose.slotAttachments;
 
   let activeMesh: MeshEditFrame | undefined;
   if (activeSkin) {
@@ -121,6 +126,7 @@ export function drawScene(
       activeSkin,
       world,
       activeSlotId,
+      slotOverrides,
       onTextureReady,
     );
   } else {
@@ -351,6 +357,7 @@ function drawAttachments(
   skin: Skin,
   worldTransforms: Map<string, WorldTransform>,
   activeSlotId: string | null,
+  slotOverrides: Map<string, string | null>,
   onReady: () => void,
 ): MeshEditFrame | undefined {
   disposeAttachments(layer);
@@ -359,10 +366,14 @@ function drawAttachments(
   let activeMesh: MeshEditFrame | undefined;
 
   for (const slot of sortedSlots) {
-    if (!slot.attachment) continue;
+    // Animation-driven attachment override wins. `null` means "hide this slot".
+    const attachmentName = slotOverrides.has(slot.id)
+      ? slotOverrides.get(slot.id)
+      : slot.attachment;
+    if (!attachmentName) continue;
 
     const att = skin.attachments.find(
-      (a) => a.slot === slot.id && a.id === slot.attachment,
+      (a) => a.slot === slot.id && a.id === attachmentName,
     );
     if (!att) continue;
 
