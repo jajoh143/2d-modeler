@@ -54,3 +54,23 @@ export function resolveBoneWorld(skeleton: Skeleton): Map<string, WorldTransform
   for (const b of skeleton.bones) resolve(b);
   return cache;
 }
+
+/** Convert a world-space point to a bone's local space (inverse of the bone's
+ *  parent transform — for editing, you want this on the parent so the result
+ *  is what you'd assign to bone.x / bone.y). */
+export function worldToLocal(
+  parent: WorldTransform | null,
+  worldX: number,
+  worldY: number,
+): { x: number; y: number } {
+  if (!parent) return { x: worldX, y: worldY };
+  const dx = worldX - parent.x;
+  const dy = worldY - parent.y;
+  const cos = Math.cos(parent.rotation);
+  const sin = Math.sin(parent.rotation);
+  // Inverse rotation, then divide by parent scale.
+  const sx = parent.scaleX || 1;
+  const sy = parent.scaleY || 1;
+  return { x: (cos * dx + sin * dy) / sx, y: (-sin * dx + cos * dy) / sy };
+}
+

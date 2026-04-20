@@ -6,6 +6,11 @@ import { emptyProject, createSkeleton } from "../model/factory";
 
 enablePatches();
 
+interface BoneSnapshot {
+  boneId: string;
+  before: Bone;
+}
+
 export type ToolId = "select" | "bone" | "mesh" | "weights";
 
 interface UndoEntry {
@@ -31,16 +36,25 @@ interface ProjectState {
   undo: () => void;
   redo: () => void;
 
-  addBone: (parentId: string, x: number, y: number, length: number) => void;
+  addBone: (parentId: string, x: number, y: number, length: number, rotation?: number) => string;
   updateBone: (boneId: string, patch: Partial<Bone>) => void;
+  removeBone: (boneId: string) => void;
   replaceSkeleton: (skeleton: Skeleton) => void;
+
+  // Drag transactions: live preview during drag, one undo entry on commit.
+  beginBoneDrag: (boneId: string, label: string) => void;
+  previewBoneDrag: (patch: Partial<Bone>) => void;
+  commitBoneDrag: () => void;
+  cancelBoneDrag: () => void;
 
   addSkeleton: (name?: string) => string;
   removeSkeleton: (id: string) => void;
   renameSkeleton: (id: string, name: string) => void;
 }
 
-export const useProjectStore = create<ProjectState>((set, get) => {
+export const useProjectStore = create<
+  ProjectState & { _dragSnapshot?: BoneSnapshot; _dragLabel?: string }
+>((set, get) => {
   const initial = emptyProject();
   return {
     project: initial,
@@ -106,24 +120,56 @@ export const useProjectStore = create<ProjectState>((set, get) => {
       });
     },
 
-    addBone: (parentId, x, y, length) => {
+    addBone: (parentId, x, y, length, rotation = 0) => {
+      const newId = nanoid(8);
       get().commit("add bone", (draft) => {
         const skel = draft.skeletons.find((s) => s.id === get().activeSkeletonId);
         if (!skel) return;
         const parent = skel.bones.find((b) => b.id === parentId);
         if (!parent) return;
         skel.bones.push({
-          id: nanoid(8),
+          id: newId,
           name: `bone${skel.bones.length}`,
           parent: parentId,
           x,
           y,
-          rotation: 0,
+          rotation,
           scaleX: 1,
           scaleY: 1,
           length,
         });
       });
+      set({ activeBoneId: newId });
+      return newId;
+    },
+
+    removeBone: (boneId) => {
+      const project = get().project;
+      const skel = project.skeletons.find((s) => s.id === get().activeSkeletonId);
+      if (!skel) return;
+      const target = skel.bones.find((b) => b.id === boneId);
+      if (!target || !target.parent) return; // Don't delete the root.
+      get().commit("delete bone", (draft) => {
+        const dskel = draft.skeletons.find((s) => s.id === get().activeSkeletonId);
+        if (!dskel) return;
+        // Remove the bone and any descendants.
+        const toRemove = new Set<string>([boneId]);
+        let changed = true;
+        while (changed) {
+          changed = false;
+          for (const b of dskel.bones) {
+            if (b.parent && toRemove.has(b.parent) && !toRemove.has(b.id)) {
+              toRemove.add(b.id);
+              changed = true;
+            }
+          }
+        }
+        dskel.bones = dskel.bones.filter((b) => !toRemove.has(b.id));
+        dskel.slots = dskel.slots.filter((s) => !toRemove.has(s.bone));
+      });
+      if (get().activeBoneId === boneId) {
+        set({ activeBoneId: target.parent });
+      }
     },
 
     addSkeleton: (name) => {
@@ -170,6 +216,71 @@ export const useProjectStore = create<ProjectState>((set, get) => {
         const idx = draft.skeletons.findIndex((s) => s.id === skeleton.id);
         if (idx >= 0) draft.skeletons[idx] = skeleton;
         else draft.skeletons.push(skeleton);
+      });
+    },
+
+    beginBoneDrag: (boneId, label) => {
+      const state = get();
+      const skel = state.project.skeletons.find((s) => s.id === state.activeSkeletonId);
+      const bone = skel?.bones.find((b) => b.id === boneId);
+      if (!bone) return;
+      set({ _dragSnapshot: { boneId, before: { ...bone } }, _dragLabel: label });
+    },
+
+    previewBoneDrag: (patch) => {
+      const state = get();
+      const snap = state._dragSnapshot;
+      if (!snap) return;
+      // Mutate live without history; commitBoneDrag pushes a single undo entry.
+      set({
+        project: produce(state.project, (draft) => {
+          const skel = draft.skeletons.find((s) => s.id === state.activeSkeletonId);
+          const bone = skel?.bones.find((b) => b.id === snap.boneId);
+          if (bone) Object.assign(bone, patch);
+        }),
+      });
+    },
+
+    commitBoneDrag: () => {
+      const state = get();
+      const snap = state._dragSnapshot;
+      const label = state._dragLabel;
+      if (!snap || !label) return;
+      const skel = state.project.skeletons.find((s) => s.id === state.activeSkeletonId);
+      const final = skel?.bones.find((b) => b.id === snap.boneId);
+      if (!final) {
+        set({ _dragSnapshot: undefined, _dragLabel: undefined });
+        return;
+      }
+      const finalCopy = { ...final };
+      // Rewind to snapshot, then commit the final state — produces one patch entry.
+      set({
+        project: produce(state.project, (draft) => {
+          const dskel = draft.skeletons.find((s) => s.id === state.activeSkeletonId);
+          const bone = dskel?.bones.find((b) => b.id === snap.boneId);
+          if (bone) Object.assign(bone, snap.before);
+        }),
+      });
+      get().commit(label, (draft) => {
+        const dskel = draft.skeletons.find((s) => s.id === state.activeSkeletonId);
+        const bone = dskel?.bones.find((b) => b.id === snap.boneId);
+        if (bone) Object.assign(bone, finalCopy);
+      });
+      set({ _dragSnapshot: undefined, _dragLabel: undefined });
+    },
+
+    cancelBoneDrag: () => {
+      const state = get();
+      const snap = state._dragSnapshot;
+      if (!snap) return;
+      set({
+        project: produce(state.project, (draft) => {
+          const skel = draft.skeletons.find((s) => s.id === state.activeSkeletonId);
+          const bone = skel?.bones.find((b) => b.id === snap.boneId);
+          if (bone) Object.assign(bone, snap.before);
+        }),
+        _dragSnapshot: undefined,
+        _dragLabel: undefined,
       });
     },
   };
