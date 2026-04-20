@@ -1,0 +1,125 @@
+:root {
+  color-scheme: dark;
+  --bg-0: #1a1a1e;
+  --bg-1: #22232a;
+  --bg-2: #2a2c35;
+  --border: #3a3c46;
+  --text: #e6e6ea;
+  --text-dim: #9a9aa6;
+  --accent: #5aa9ff;
+  --accent-soft: #5aa9ff33;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg-0);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.app-root {
+  display: grid;
+  grid-template-rows: 28px 36px 1fr 220px;
+  height: 100vh;
+}
+
+.app-body {
+  display: grid;
+  grid-template-columns: 260px 1fr 300px;
+  min-height: 0;
+}
+
+.left-panel, .right-panel {
+  background: var(--bg-1);
+  border-right: 1px solid var(--border);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.right-panel {
+  border-right: none;
+  border-left: 1px solid var(--border);
+}
+
+.viewport-area {
+  background: var(--bg-0);
+  position: relative;
+  overflow: hidden;
+}
+
+.timeline-area {
+  background: var(--bg-1);
+  border-top: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.panel-header {
+  padding: 6px 10px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-2);
+  flex-shrink: 0;
+}
+
+.panel-body {
+  flex: 1;
+  overflow: auto;
+  padding: 8px;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--border);
+}
+
+.toolbar button {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text);
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.toolbar button:hover {
+  background: var(--bg-2);
+}
+
+.toolbar button.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.menu-bar {
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  font-size: 12px;
+  gap: 12px;
+  color: var(--text-dim);
+}
+
+.menu-bar .title {
+  color: var(--text);
+  font-weight: 600;
+}
