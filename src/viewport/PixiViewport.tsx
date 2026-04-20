@@ -11,7 +11,9 @@ import {
   clearPreview,
   hitTestBones,
   hitTestGizmo,
+  hitTestMeshVertex,
   type BoneScreen,
+  type MeshEditFrame,
   type SceneLayer,
 } from "./scene";
 
@@ -22,7 +24,7 @@ interface GridLayer {
   axes: Graphics;
 }
 
-type DragKind = "translate" | "rotate" | "create" | "pan";
+type DragKind = "translate" | "rotate" | "create" | "pan" | "vertex";
 
 interface ActiveDrag {
   kind: DragKind;
@@ -36,6 +38,9 @@ interface ActiveDrag {
   boneId?: string;
   /** Parent of the bone (for translate / create / rotate). */
   parentId?: string | null;
+  /** Slot + vertex index for mesh-vertex drags. */
+  slotId?: string;
+  vertexIndex?: number;
 }
 
 const CLICK_THRESHOLD_PX = 3;
@@ -46,6 +51,7 @@ export function PixiViewport() {
   const worldRef = useRef<Container | null>(null);
   const sceneRef = useRef<SceneLayer | null>(null);
   const bonesRef = useRef<BoneScreen[]>([]);
+  const activeMeshRef = useRef<MeshEditFrame | undefined>(undefined);
   const dragRef = useRef<ActiveDrag | null>(null);
   const lastPanRef = useRef<{ x: number; y: number } | null>(null);
 
@@ -96,17 +102,19 @@ export function PixiViewport() {
         const state = useProjectStore.getState();
         const skeleton = state.project.skeletons.find((s) => s.id === state.activeSkeletonId);
         const skin = skeleton?.skins.find((s) => s.id === state.activeSkinId) ?? skeleton?.skins[0];
-        const showGizmos = state.activeTool === "select" || state.activeTool === "bone";
-        bonesRef.current = drawScene(
+        const frame = drawScene(
           scene,
           skeleton,
           state.project.assets,
           skin,
           state.activeBoneId,
+          state.activeSlotId,
+          state.activeTool,
           world.scale.x,
-          showGizmos,
           redrawScene,
         );
+        bonesRef.current = frame.bones;
+        activeMeshRef.current = frame.activeMesh;
       };
 
       const pushCamera = () => {
@@ -122,7 +130,17 @@ export function PixiViewport() {
         redrawScene();
       };
 
-      const teardownInput = wireInput(app, world, pushCamera, redrawScene, dragRef, lastPanRef, bonesRef, sceneRef);
+      const teardownInput = wireInput(
+        app,
+        world,
+        pushCamera,
+        redrawScene,
+        dragRef,
+        lastPanRef,
+        bonesRef,
+        activeMeshRef,
+        sceneRef,
+      );
       const teardownDrop = wireDropTarget(host, app, world);
       pushCamera();
 
@@ -201,6 +219,7 @@ function wireInput(
   dragRef: React.MutableRefObject<ActiveDrag | null>,
   panRef: React.MutableRefObject<{ x: number; y: number } | null>,
   bonesRef: React.MutableRefObject<BoneScreen[]>,
+  activeMeshRef: React.MutableRefObject<MeshEditFrame | undefined>,
   sceneRef: React.MutableRefObject<SceneLayer | null>,
 ): () => void {
   const canvas = app.canvas;
@@ -237,6 +256,32 @@ function wireInput(
         active: false,
         parentId,
       };
+      return;
+    }
+
+    if (tool === "mesh") {
+      const meshFrame = activeMeshRef.current;
+      const vi = hitTestMeshVertex(meshFrame, wp.x, wp.y, world.scale.x);
+      if (vi != null && meshFrame) {
+        dragRef.current = {
+          kind: "vertex",
+          screenStart: { x: e.clientX, y: e.clientY },
+          worldStart: wp,
+          active: false,
+          slotId: meshFrame.slotId,
+          vertexIndex: vi,
+        };
+      }
+      return;
+    }
+
+    if (tool === "weights") {
+      const meshFrame = activeMeshRef.current;
+      if (!meshFrame || !state.activeBoneId) return;
+      const vi = hitTestMeshVertex(meshFrame, wp.x, wp.y, world.scale.x);
+      if (vi != null) {
+        state.bindVertexToBone(meshFrame.slotId, vi, state.activeBoneId);
+      }
       return;
     }
 
@@ -310,6 +355,22 @@ function wireInput(
       return;
     }
 
+    if (drag.kind === "vertex") {
+      if (drag.slotId == null || drag.vertexIndex == null) return;
+      const store = useProjectStore.getState();
+      const skel = store.project.skeletons.find((s) => s.id === store.activeSkeletonId);
+      const slot = skel?.slots.find((s) => s.id === drag.slotId);
+      if (!skel || !slot) return;
+      const worlds = resolveBoneWorld(skel);
+      const boneWorld = worlds.get(slot.bone) ?? null;
+      const local = worldToLocal(boneWorld, wp.x, wp.y);
+      if (!store._meshDragSnapshot) {
+        store.beginMeshVertexDrag(drag.slotId, drag.vertexIndex);
+      }
+      store.previewMeshVertexDrag(local.x, local.y);
+      return;
+    }
+
     if (!drag.boneId) return;
     const store = useProjectStore.getState();
     const skel = store.project.skeletons.find((s) => s.id === store.activeSkeletonId);
@@ -373,6 +434,16 @@ function wireInput(
       } else {
         store.cancelBoneDrag();
       }
+      return;
+    }
+
+    if (drag.kind === "vertex") {
+      if (drag.active) {
+        store.commitMeshVertexDrag();
+      } else {
+        store.cancelMeshVertexDrag();
+      }
+      return;
     }
   };
 
@@ -401,6 +472,7 @@ function wireInput(
       e.preventDefault();
       if (dragRef.current) {
         store.cancelBoneDrag();
+        store.cancelMeshVertexDrag();
         dragRef.current = null;
         const scene = sceneRef.current;
         if (scene) clearPreview(scene);
@@ -413,6 +485,7 @@ function wireInput(
       e.preventDefault();
       if (dragRef.current) {
         store.cancelBoneDrag();
+        store.cancelMeshVertexDrag();
         dragRef.current = null;
         const scene = sceneRef.current;
         if (scene) clearPreview(scene);
@@ -442,6 +515,7 @@ function wireInput(
     } else if (e.key === "Escape") {
       if (dragRef.current) {
         store.cancelBoneDrag();
+        store.cancelMeshVertexDrag();
         const scene = sceneRef.current;
         if (scene) clearPreview(scene);
         dragRef.current = null;

@@ -1,15 +1,24 @@
 import { create } from "zustand";
 import { produce, enablePatches, applyPatches, type Patch } from "immer";
 import { nanoid } from "nanoid";
-import type { Project, Skeleton, Bone } from "../model/types";
+import type { Project, Skeleton, Bone, MeshAttachment, RegionAttachment } from "../model/types";
 import { emptyProject, createSkeleton } from "../model/factory";
 import { resolveBoneWorld, worldToLocal } from "../model/skeletonMath";
+import { regionToMeshGeometry, captureVertexRest, normalizeWeights } from "../model/mesh";
 
 enablePatches();
 
 interface BoneSnapshot {
   boneId: string;
   before: Bone;
+}
+
+interface MeshVertexSnapshot {
+  slotId: string;
+  attachmentName: string;
+  vertexIndex: number;
+  beforeX: number;
+  beforeY: number;
 }
 
 export type ToolId = "select" | "bone" | "mesh" | "weights";
@@ -70,10 +79,26 @@ interface ProjectState {
   addSkin: (name?: string) => string;
   removeSkin: (id: string) => void;
   renameSkin: (id: string, name: string) => void;
+
+  // Meshes (M5).
+  convertSlotToMesh: (slotId: string, cols?: number, rows?: number) => void;
+  setMeshResolution: (slotId: string, cols: number, rows: number) => void;
+  updateMeshVertex: (slotId: string, vertexIndex: number, x: number, y: number) => void;
+  bindVertexToBone: (slotId: string, vertexIndex: number, boneId: string) => void;
+  bindMeshToBone: (slotId: string, boneId: string) => void;
+
+  beginMeshVertexDrag: (slotId: string, vertexIndex: number) => void;
+  previewMeshVertexDrag: (x: number, y: number) => void;
+  commitMeshVertexDrag: () => void;
+  cancelMeshVertexDrag: () => void;
 }
 
 export const useProjectStore = create<
-  ProjectState & { _dragSnapshot?: BoneSnapshot; _dragLabel?: string }
+  ProjectState & {
+    _dragSnapshot?: BoneSnapshot;
+    _dragLabel?: string;
+    _meshDragSnapshot?: MeshVertexSnapshot;
+  }
 >((set, get) => {
   const initial = emptyProject();
   return {
@@ -456,8 +481,248 @@ export const useProjectStore = create<
         if (skin) skin.name = trimmed;
       });
     },
+
+    convertSlotToMesh: (slotId, cols = 5, rows = 5) => {
+      const state = get();
+      const skel = state.project.skeletons.find((s) => s.id === state.activeSkeletonId);
+      const skin = skel?.skins.find((s) => s.id === state.activeSkinId);
+      if (!skel || !skin) return;
+      const slot = skel.slots.find((s) => s.id === slotId);
+      if (!slot || !slot.attachment) return;
+      const region = skin.attachments.find(
+        (a) => a.slot === slot.id && a.id === slot.attachment && a.kind === "region",
+      ) as RegionAttachment | undefined;
+      if (!region) return;
+      const asset = state.project.assets.find((a) => a.id === region.assetId);
+      if (!asset) return;
+
+      const geom = regionToMeshGeometry(region, asset, cols, rows);
+      const vertexCount = geom.vertices.length / 2;
+      // Default weights: empty array per vertex → skinner will pin to main bone.
+      const weights: MeshAttachment["weights"] = Array.from({ length: vertexCount }, () => []);
+
+      get().commit("convert to mesh", (draft) => {
+        const dskel = draft.skeletons.find((s) => s.id === state.activeSkeletonId);
+        const dskin = dskel?.skins.find((s) => s.id === state.activeSkinId);
+        if (!dskin) return;
+        const idx = dskin.attachments.findIndex(
+          (a) => a.slot === slot.id && a.id === slot.attachment,
+        );
+        if (idx < 0) return;
+        const mesh: MeshAttachment = {
+          kind: "mesh",
+          id: region.id,
+          slot: region.slot,
+          assetId: region.assetId,
+          vertices: geom.vertices,
+          uvs: geom.uvs,
+          triangles: geom.triangles,
+          weights,
+        };
+        dskin.attachments[idx] = mesh;
+      });
+    },
+
+    setMeshResolution: (slotId, cols, rows) => {
+      const state = get();
+      const skel = state.project.skeletons.find((s) => s.id === state.activeSkeletonId);
+      const skin = skel?.skins.find((s) => s.id === state.activeSkinId);
+      if (!skel || !skin) return;
+      const slot = skel.slots.find((s) => s.id === slotId);
+      if (!slot) return;
+      const mesh = skin.attachments.find(
+        (a) => a.slot === slot.id && a.id === slot.attachment && a.kind === "mesh",
+      ) as MeshAttachment | undefined;
+      if (!mesh) return;
+      const asset = state.project.assets.find((a) => a.id === mesh.assetId);
+      if (!asset) return;
+      // Regenerate from a synthesized region at identity (since mesh carries no
+      // rotation/scale anchor beyond its vertex positions). This discards any
+      // hand-edited vertex moves — acceptable for an explicit resolution change.
+      const synthRegion: RegionAttachment = {
+        kind: "region",
+        id: mesh.id,
+        slot: mesh.slot,
+        assetId: mesh.assetId,
+        x: 0,
+        y: 0,
+        rotation: 0,
+        scaleX: 1,
+        scaleY: 1,
+      };
+      const geom = regionToMeshGeometry(synthRegion, asset, cols, rows);
+      const vertexCount = geom.vertices.length / 2;
+      get().commit("set mesh resolution", (draft) => {
+        const dskel = draft.skeletons.find((s) => s.id === state.activeSkeletonId);
+        const dskin = dskel?.skins.find((s) => s.id === state.activeSkinId);
+        const dmesh = dskin?.attachments.find(
+          (a) => a.slot === slot.id && a.id === slot.attachment && a.kind === "mesh",
+        ) as MeshAttachment | undefined;
+        if (!dmesh) return;
+        dmesh.vertices = geom.vertices;
+        dmesh.uvs = geom.uvs;
+        dmesh.triangles = geom.triangles;
+        dmesh.weights = Array.from({ length: vertexCount }, () => []);
+      });
+    },
+
+    updateMeshVertex: (slotId, vertexIndex, x, y) => {
+      get().commit("move vertex", (draft) => {
+        const mesh = findMeshForSlot(draft, get().activeSkeletonId, get().activeSkinId, slotId);
+        if (!mesh) return;
+        if (vertexIndex * 2 + 1 >= mesh.vertices.length) return;
+        mesh.vertices[vertexIndex * 2] = x;
+        mesh.vertices[vertexIndex * 2 + 1] = y;
+      });
+    },
+
+    bindVertexToBone: (slotId, vertexIndex, boneId) => {
+      const state = get();
+      const skel = state.project.skeletons.find((s) => s.id === state.activeSkeletonId);
+      const skin = skel?.skins.find((s) => s.id === state.activeSkinId);
+      if (!skel || !skin) return;
+      const slot = skel.slots.find((s) => s.id === slotId);
+      if (!slot) return;
+      const mesh = skin.attachments.find(
+        (a) => a.slot === slot.id && a.id === slot.attachment && a.kind === "mesh",
+      ) as MeshAttachment | undefined;
+      if (!mesh) return;
+      const vx = mesh.vertices[vertexIndex * 2];
+      const vy = mesh.vertices[vertexIndex * 2 + 1];
+      const rest = captureVertexRest(skel, slot.bone, boneId, vx, vy);
+
+      get().commit("bind vertex", (draft) => {
+        const m = findMeshForSlot(draft, state.activeSkeletonId, state.activeSkinId, slotId);
+        if (!m) return;
+        m.weights[vertexIndex] = [{ bone: boneId, weight: 1, x: rest.x, y: rest.y }];
+      });
+    },
+
+    bindMeshToBone: (slotId, boneId) => {
+      const state = get();
+      const skel = state.project.skeletons.find((s) => s.id === state.activeSkeletonId);
+      const skin = skel?.skins.find((s) => s.id === state.activeSkinId);
+      if (!skel || !skin) return;
+      const slot = skel.slots.find((s) => s.id === slotId);
+      if (!slot) return;
+      const mesh = skin.attachments.find(
+        (a) => a.slot === slot.id && a.id === slot.attachment && a.kind === "mesh",
+      ) as MeshAttachment | undefined;
+      if (!mesh) return;
+
+      const rests: { x: number; y: number }[] = [];
+      for (let i = 0; i < mesh.vertices.length; i += 2) {
+        rests.push(captureVertexRest(skel, slot.bone, boneId, mesh.vertices[i], mesh.vertices[i + 1]));
+      }
+
+      get().commit("bind mesh to bone", (draft) => {
+        const m = findMeshForSlot(draft, state.activeSkeletonId, state.activeSkinId, slotId);
+        if (!m) return;
+        m.weights = rests.map((r) => [{ bone: boneId, weight: 1, x: r.x, y: r.y }]);
+      });
+    },
+
+    beginMeshVertexDrag: (slotId, vertexIndex) => {
+      const state = get();
+      const skel = state.project.skeletons.find((s) => s.id === state.activeSkeletonId);
+      const skin = skel?.skins.find((s) => s.id === state.activeSkinId);
+      const slot = skel?.slots.find((s) => s.id === slotId);
+      if (!skel || !skin || !slot || !slot.attachment) return;
+      const mesh = skin.attachments.find(
+        (a) => a.slot === slot.id && a.id === slot.attachment && a.kind === "mesh",
+      ) as MeshAttachment | undefined;
+      if (!mesh) return;
+      if (vertexIndex * 2 + 1 >= mesh.vertices.length) return;
+      set({
+        _meshDragSnapshot: {
+          slotId,
+          attachmentName: slot.attachment,
+          vertexIndex,
+          beforeX: mesh.vertices[vertexIndex * 2],
+          beforeY: mesh.vertices[vertexIndex * 2 + 1],
+        },
+      });
+    },
+
+    previewMeshVertexDrag: (x, y) => {
+      const state = get();
+      const snap = state._meshDragSnapshot;
+      if (!snap) return;
+      set({
+        project: produce(state.project, (draft) => {
+          const m = findMeshForSlot(draft, state.activeSkeletonId, state.activeSkinId, snap.slotId);
+          if (!m) return;
+          m.vertices[snap.vertexIndex * 2] = x;
+          m.vertices[snap.vertexIndex * 2 + 1] = y;
+        }),
+      });
+    },
+
+    commitMeshVertexDrag: () => {
+      const state = get();
+      const snap = state._meshDragSnapshot;
+      if (!snap) return;
+      const m = findMeshForSlot(state.project, state.activeSkeletonId, state.activeSkinId, snap.slotId);
+      if (!m) {
+        set({ _meshDragSnapshot: undefined });
+        return;
+      }
+      const finalX = m.vertices[snap.vertexIndex * 2];
+      const finalY = m.vertices[snap.vertexIndex * 2 + 1];
+      // Rewind to before, then commit final through the patch-based history.
+      set({
+        project: produce(state.project, (draft) => {
+          const dm = findMeshForSlot(draft, state.activeSkeletonId, state.activeSkinId, snap.slotId);
+          if (!dm) return;
+          dm.vertices[snap.vertexIndex * 2] = snap.beforeX;
+          dm.vertices[snap.vertexIndex * 2 + 1] = snap.beforeY;
+        }),
+      });
+      get().commit("move vertex", (draft) => {
+        const dm = findMeshForSlot(draft, state.activeSkeletonId, state.activeSkinId, snap.slotId);
+        if (!dm) return;
+        dm.vertices[snap.vertexIndex * 2] = finalX;
+        dm.vertices[snap.vertexIndex * 2 + 1] = finalY;
+      });
+      set({ _meshDragSnapshot: undefined });
+    },
+
+    cancelMeshVertexDrag: () => {
+      const state = get();
+      const snap = state._meshDragSnapshot;
+      if (!snap) return;
+      set({
+        project: produce(state.project, (draft) => {
+          const m = findMeshForSlot(draft, state.activeSkeletonId, state.activeSkinId, snap.slotId);
+          if (!m) return;
+          m.vertices[snap.vertexIndex * 2] = snap.beforeX;
+          m.vertices[snap.vertexIndex * 2 + 1] = snap.beforeY;
+        }),
+        _meshDragSnapshot: undefined,
+      });
+    },
   };
 });
+
+function findMeshForSlot(
+  project: Project,
+  skeletonId: string,
+  skinId: string,
+  slotId: string,
+): MeshAttachment | undefined {
+  const skel = project.skeletons.find((s) => s.id === skeletonId);
+  const skin = skel?.skins.find((s) => s.id === skinId);
+  const slot = skel?.slots.find((s) => s.id === slotId);
+  if (!slot || !slot.attachment || !skin) return undefined;
+  const att = skin.attachments.find(
+    (a) => a.slot === slot.id && a.id === slot.attachment && a.kind === "mesh",
+  );
+  return att as MeshAttachment | undefined;
+}
+
+// Reference to keep tree-shaking from dropping normalizeWeights until it's
+// wired into the weights-paint tool in M5.1.
+void normalizeWeights;
 
 function sanitizeName(s: string): string {
   const cleaned = s.replace(/[^\w.-]/g, "_").replace(/^_+|_+$/g, "");

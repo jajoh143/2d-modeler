@@ -89,6 +89,11 @@ export interface MeshAttachment {
 export interface BoneWeight {
   bone: string;
   weight: number;
+  /** Vertex position in this bone's local rest-pose space. Captured when the
+   *  bone is first bound to the vertex, and re-used during skinning so that
+   *  multi-bone blends are stable regardless of the current pose. */
+  x: number;
+  y: number;
 }
 
 export interface IkConstraint {

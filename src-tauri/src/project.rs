@@ -100,6 +100,8 @@ pub enum Attachment {
 pub struct BoneWeight {
     pub bone: String,
     pub weight: f32,
+    pub x: f32,
+    pub y: f32,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
