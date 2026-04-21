@@ -8,6 +8,7 @@ import { AssetBrowser } from "./panels/AssetBrowser";
 import { SlotsPanel } from "./panels/SlotsPanel";
 import { SkinManager } from "./panels/SkinManager";
 import { IkConstraintsPanel } from "./panels/IkConstraintsPanel";
+import { LibraryPanel } from "./panels/LibraryPanel";
 import { Timeline } from "./timeline/Timeline";
 import { PlaybackLoop } from "./timeline/PlaybackLoop";
 import { Toolbar } from "./panels/Toolbar";
@@ -20,6 +21,7 @@ export default function App() {
       <Toolbar />
       <div className="app-body">
         <aside className="left-panel">
+          <LibraryPanel />
           <Outline />
           <SlotsPanel />
           <AssetBrowser />

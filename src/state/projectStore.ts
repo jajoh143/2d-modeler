@@ -16,6 +16,8 @@ import { resolveBoneWorld, worldToLocal } from "../model/skeletonMath";
 import { resolvePose } from "../model/pose";
 import { regionToMeshGeometry, captureVertexRest, normalizeWeights } from "../model/mesh";
 import { upsertKeyframe, removeKeyframeAt as removeKf } from "../model/animationEval";
+import { buildInstantiation } from "../library/instantiate";
+import type { StockTemplate } from "../library/templates";
 
 enablePatches();
 
@@ -79,6 +81,8 @@ interface ProjectState {
   addSkeleton: (name?: string) => string;
   removeSkeleton: (id: string) => void;
   renameSkeleton: (id: string, name: string) => void;
+  /** Instantiate a stock template as a new skeleton and make it active. */
+  instantiateTemplate: (template: StockTemplate) => string;
 
   // Assets + slots + attachments + skins (M4).
   addAsset: (name: string, dataUrl: string, width: number, height: number) => string;
@@ -302,6 +306,21 @@ export const useProjectStore = create<
         const skel = draft.skeletons.find((s) => s.id === id);
         if (skel) skel.name = trimmed;
       });
+    },
+
+    instantiateTemplate: (template) => {
+      const result = buildInstantiation(template);
+      get().commit(`insert ${template.name}`, (draft) => {
+        draft.assets.push(...result.assets);
+        draft.skeletons.push(result.skeleton);
+      });
+      set({
+        activeSkeletonId: result.skeleton.id,
+        activeSkinId: result.skeleton.skins[0].id,
+        activeBoneId: result.skeleton.bones[0]?.id ?? null,
+        activeSlotId: null,
+      });
+      return result.skeleton.id;
     },
 
     updateBone: (boneId, patch) => {

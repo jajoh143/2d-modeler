@@ -651,6 +651,78 @@ input[type="number"]:focus {
   z-index: 3;
 }
 
+.library-group {
+  border-bottom: 1px solid var(--border);
+}
+
+.library-group-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--bg-2);
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.library-group-header:hover {
+  background: var(--bg-1);
+}
+
+.library-count {
+  margin-left: auto;
+  color: var(--text-dim);
+  font-size: 10px;
+  background: var(--bg-1);
+  padding: 1px 6px;
+  border-radius: 8px;
+}
+
+.library-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+}
+
+.library-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 3px 10px;
+  font-size: 12px;
+}
+
+.library-item:hover {
+  background: var(--bg-2);
+}
+
+.library-item-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.library-insert {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  padding: 2px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 10px;
+}
+
+.library-insert:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
 .dopesheet-playhead-line {
   position: absolute;
   top: 0;
