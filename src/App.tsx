@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { PixiViewport } from "./viewport/PixiViewport";
 import { Rulers, RULER_THICKNESS } from "./viewport/Rulers";
 import { SkeletonTabs } from "./viewport/SkeletonTabs";
@@ -13,11 +14,13 @@ import { Timeline } from "./timeline/Timeline";
 import { PlaybackLoop } from "./timeline/PlaybackLoop";
 import { Toolbar } from "./panels/Toolbar";
 import { MenuBar } from "./panels/MenuBar";
+import { ExportDialog } from "./dialogs/ExportDialog";
 
 export default function App() {
+  const [exportOpen, setExportOpen] = useState(false);
   return (
     <div className="app-root">
-      <MenuBar />
+      <MenuBar onExport={() => setExportOpen(true)} />
       <Toolbar />
       <div className="app-body">
         <aside className="left-panel">
@@ -54,6 +57,7 @@ export default function App() {
         <Timeline />
       </footer>
       <PlaybackLoop />
+      {exportOpen && <ExportDialog onClose={() => setExportOpen(false)} />}
     </div>
   );
 }
