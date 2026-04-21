@@ -4,6 +4,7 @@ import { useProjectStore } from "../state/projectStore";
 import { useViewportStore, niceStep } from "../state/viewportStore";
 import { resolveBoneWorld, worldToLocal } from "../model/skeletonMath";
 import { ASSET_DRAG_MIME } from "../panels/AssetBrowser";
+import { openProject, saveProject, saveProjectAs } from "../persistence";
 import {
   createSceneLayer,
   drawScene,
@@ -471,6 +472,17 @@ function wireInput(
       world.scale.set(1);
       world.position.set(app.screen.width / 2, app.screen.height / 2);
       onCameraChange();
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+      e.preventDefault();
+      if (e.shiftKey) void saveProjectAs();
+      else void saveProject();
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key === "o") {
+      e.preventDefault();
+      void openProject();
       return;
     }
     if ((e.ctrlKey || e.metaKey) && e.key === "z") {

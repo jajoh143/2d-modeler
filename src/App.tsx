@@ -15,12 +15,19 @@ import { PlaybackLoop } from "./timeline/PlaybackLoop";
 import { Toolbar } from "./panels/Toolbar";
 import { MenuBar } from "./panels/MenuBar";
 import { ExportDialog } from "./dialogs/ExportDialog";
+import { ShortcutsPanel } from "./dialogs/ShortcutsPanel";
+import { Toasts } from "./panels/Toasts";
+import { AutosaveLoop, RestorePrompt } from "./persistence/autosave";
 
 export default function App() {
   const [exportOpen, setExportOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   return (
     <div className="app-root">
-      <MenuBar onExport={() => setExportOpen(true)} />
+      <MenuBar
+        onExport={() => setExportOpen(true)}
+        onShortcuts={() => setShortcutsOpen(true)}
+      />
       <Toolbar />
       <div className="app-body">
         <aside className="left-panel">
@@ -57,7 +64,11 @@ export default function App() {
         <Timeline />
       </footer>
       <PlaybackLoop />
+      <AutosaveLoop />
+      <RestorePrompt />
+      <Toasts />
       {exportOpen && <ExportDialog onClose={() => setExportOpen(false)} />}
+      {shortcutsOpen && <ShortcutsPanel onClose={() => setShortcutsOpen(false)} />}
     </div>
   );
 }

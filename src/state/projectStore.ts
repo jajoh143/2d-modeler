@@ -44,6 +44,8 @@ interface UndoEntry {
 
 interface ProjectState {
   project: Project;
+  /** Filesystem path of the last save/open, or null for unsaved projects. */
+  currentPath: string | null;
   activeSkeletonId: string;
   activeSkinId: string;
   activeBoneId: string | null;
@@ -83,6 +85,12 @@ interface ProjectState {
   renameSkeleton: (id: string, name: string) => void;
   /** Instantiate a stock template as a new skeleton and make it active. */
   instantiateTemplate: (template: StockTemplate) => string;
+
+  /** Replace the entire project (used by Open / Restore autosave). */
+  replaceProject: (project: Project, path?: string | null) => void;
+  /** Mark the store as saved to `path`, clearing the history so future undos
+   *  don't pop back past the save point. */
+  markSaved: (path: string) => void;
 
   // Assets + slots + attachments + skins (M4).
   addAsset: (name: string, dataUrl: string, width: number, height: number) => string;
@@ -148,6 +156,7 @@ export const useProjectStore = create<
   const initial = emptyProject();
   return {
     project: initial,
+    currentPath: null,
     activeSkeletonId: initial.skeletons[0].id,
     activeSkinId: initial.skeletons[0].skins[0].id,
     activeBoneId: initial.skeletons[0].bones[0].id,
@@ -306,6 +315,27 @@ export const useProjectStore = create<
         const skel = draft.skeletons.find((s) => s.id === id);
         if (skel) skel.name = trimmed;
       });
+    },
+
+    replaceProject: (project, path) => {
+      const skel = project.skeletons[0];
+      set({
+        project,
+        currentPath: path ?? null,
+        activeSkeletonId: skel?.id ?? "",
+        activeSkinId: skel?.skins[0]?.id ?? "",
+        activeBoneId: skel?.bones[0]?.id ?? null,
+        activeSlotId: null,
+        activeAnimationId: null,
+        playheadTime: 0,
+        isPlaying: false,
+        isRecording: false,
+        history: { past: [], future: [] },
+      });
+    },
+
+    markSaved: (path) => {
+      set({ currentPath: path });
     },
 
     instantiateTemplate: (template) => {
